@@ -274,13 +274,14 @@ async def scroll_all_download(page, menu_type, save_dir, num=None, batch_size=No
     return downloaded_list
 
 
-async def select_order(page, order_type, timeout=3000):
-    # type: (Page, Order, int) -> None
+async def select_order(page, menu_type, order_type, timeout=3000):
+    # type: (Page, str, Order, int) -> None
     """选择排序方式"""
-    order_selector = ORDER_SELECTOR[order_type]
+    order_bar_selector = f"{CONTENTS_SELECTOR[menu_type]}{ORDER_BAR_SELECTOR}"
+    order_selector = f"{CONTENTS_SELECTOR[menu_type]}{ORDER_SELECTOR[order_type]}"
 
-    await page.wait_for_selector(ORDER_BAR_SELECTOR)
-    await page.hover(ORDER_BAR_SELECTOR)
+    await page.wait_for_selector(order_bar_selector)
+    await page.hover(order_bar_selector)
 
     await page.wait_for_selector(order_selector)
     await page.click(order_selector)
@@ -311,7 +312,7 @@ async def main(menu_type, order_type=None, num=None, override=False, *, debug=No
         await click_wait(page, MENU_SELECTOR[menu_type], wait_fn=contents_wait_fn)
 
         if order_type:
-            await select_order(page, order_type, CONTENTS_TIMEOUT)
+            await select_order(page, menu_type, order_type, CONTENTS_TIMEOUT)
 
         name_list = await scroll_all_download(page, menu_type, save_dir, 4 if DEBUG and not num else num, 2 if DEBUG and not batch_size else BATCH_SIZE, override)
 
