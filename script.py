@@ -2,6 +2,7 @@ import os
 from enum import Enum
 import asyncio
 import argparse
+from copy import deepcopy
 import logging
 
 import requests
@@ -11,36 +12,7 @@ from urllib.parse import urljoin
 from playwright.async_api import Page
 from playwright.async_api import async_playwright
 
-
-### argparse ###
-
-parser = argparse.ArgumentParser(prog="EasyShare(互传)_Web_Downloader", description="This script simulates the browser request to realize the function of **quick** batch file download. 本脚本通过模拟浏览器请求，实现了互传网页版**快速**批量下载文件的功能")
-parser.add_argument("menu_type", choices=["home", "img", "video", "music", "app", "doc"], help="选择下载的文件类型")
-parser.add_argument("-n", "--number", type=int, help="选择下载的文件数量")
-parser.add_argument("-o", "--override", action="store_true", help="是否覆盖同名文件")
-parser.add_argument("-D", "--debug", action="store_true", help="开启调试模式")
-parser.add_argument("-B", "--base-url", help="设置互传网页版地址")
-parser.add_argument("-A", "--save-dir", help="设置下载保存目录")
-parser.add_argument("-S", "--batch-size", type=int, help="设置每次下载的文件数量")
-parser.add_argument("-T", "--contents-timeout", type=int, help="等待内容加载的时间，单位ms")
-parser.add_argument("-d", "--tmp-save-dir", help="设置临时保存目录")
-
-
-### 配置参数 ###
-
-DEBUG = False
-# do not use "http://as.vivo.com/"; use the url which has already established connection
-BASE_URL = "http://192.168.1.57:55666/"
-# 下载保存目录
-SAVE_DIR = "G:\\phoneT\\互传-网页传文件\\ScriptDownloads"  
-# no cookies
-HEADERS = {
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/132.0.0.0 Safari/537.36 Edg/132.0.0.0",
-}
-BATCH_SIZE = 6
-CONTENTS_TIMEOUT = 3000 # ms
-# 日志配置
-LOG_LEVEL = logging.INFO
+from config import *
 
 
 ### 常量 ###
@@ -103,12 +75,50 @@ DIR_NAMES = {
     Menu.FILE.value: "文件",
 }
 
+class Order(Enum):
+    NAME = 0
+    TYPE = 2
+    TIME_ASC = 4
+    TIME_DESC = 5 # default
+    SIZE_ASC = 6
+    SIZE_DESC = 7
 
-### 其他 ###
+ORDER_BAR_SELECTOR = "//div[contains(@class, 'tab_line')]//div[contains(@class, 'selectBar')]"
+
+ORDER_SELECTOR = {i:f"{ORDER_BAR_SELECTOR}//li[@value='{i.value}']" for i in list(Order)}
+
+ORDER_CMD_CHOICES = {
+    "name": Order.NAME,
+    "type": Order.TYPE,
+    "time_asc": Order.TIME_ASC,
+    "time_desc": Order.TIME_DESC,
+    "size_asc": Order.SIZE_ASC,
+    "size_desc": Order.SIZE_DESC
+}
+
+
+### logger ###
 
 logging.basicConfig(level=LOG_LEVEL, format = '%(asctime)s %(name)s: [%(levelname)s] %(message)s')
 logger = logging.getLogger(__name__)
 
+
+### argparse ###
+
+parser = argparse.ArgumentParser(prog="EasyShare(互传)_Web_Downloader", description="This script simulates the browser request to realize the function of **quick** batch file download. 本脚本通过模拟浏览器请求，实现了互传网页版**快速**批量下载文件的功能")
+parser.add_argument("menu_type", choices=["home", "img", "video", "music", "app", "doc"], help="选择下载的文件类型")
+parser.add_argument("-o", "--order", choices=ORDER_CMD_CHOICES.keys(), help="选择排序方式")
+parser.add_argument("-n", "--number", type=int, help="选择下载的文件数量")
+parser.add_argument("-r", "--override", action="store_true", help="是否覆盖同名文件")
+parser.add_argument("-D", "--debug", action="store_true", help="开启调试模式")
+parser.add_argument("-B", "--base-url", help="设置互传网页版地址")
+parser.add_argument("-A", "--save-dir", help="设置下载保存目录")
+parser.add_argument("-S", "--batch-size", type=int, help="设置每次下载的文件数量")
+parser.add_argument("-T", "--contents-timeout", type=int, help="等待内容加载的时间，单位ms")
+parser.add_argument("-d", "--tmp-save-dir", help="设置临时保存目录")
+
+
+### functions ###
 
 def create_dir(path):
     # type: (str) -> bool
@@ -160,25 +170,33 @@ async def click_wait(page, click_selector, wait_selector=None, wait_fn=None):
     return await page.content()
 
 
-async def batch_download(page, menu_type, save_dir, num=None, batch_size=None, override=False, name_list=None):
+async def batch_download(page, menu_type, save_dir, num=None, batch_size=None, override=False, _downloaded_list=None):
     # type: (Page, str, str, int|None, int|None, bool, list|None) -> tuple[int, list[str]]
-    """批量下载"""
+    """批量下载
+    
+    Args:
+        page: Page
+        menu_type: str - Menu.value
+        save_dir: str
+        num: int - 最多下载的文件数量，默认为None，即下载所有“可见”(html中有的)文件
+        batch_size: int - 一批次并行下载的文件数量，默认为None，即一次性下载所有“可见”(html中有的)文件
+        override: bool - 是否覆盖已存在的文件，默认为False
+        _downloaded_list: list[str] - 已下载的文件名列表，默认为None。注：由`srcoll_all_download`调用，且是deepcopy。
+    """
+    existed_list = os.listdir(save_dir)
+    
+    # the item selector: used to be hovered
     selector = ITEMS_SELECTOR[menu_type]
+    # the download selector: used to be clicked
     download_selector = DOWNLOAD_SELECTOR[menu_type]
 
     await page.wait_for_selector(selector)
     elements = await page.query_selector_all(selector)
 
-    if not num:
-        num = len(elements)
-    if not batch_size:
-        batch_size = len(elements)
-    if not name_list:
-        name_list = []
-
-    num = min(num, len(elements))
-    batch_size = min(batch_size, len(elements))
-    name_list_lock = asyncio.Lock()
+    num = min(num, len(elements)) if num else len(elements)
+    batch_size = min(batch_size, len(elements)) if batch_size else len(elements)
+    downloaded_list = deepcopy(_downloaded_list) if _downloaded_list else []
+    downloaded_list_lock = asyncio.Lock()
 
     batch_count = 0
     count = 0
@@ -186,72 +204,92 @@ async def batch_download(page, menu_type, save_dir, num=None, batch_size=None, o
     while count < num:
         async with asyncio.TaskGroup() as tg:
             for element in elements[batch_count * batch_size:(batch_count + 1) * batch_size]:
+                # title is the file name
+                title = await element.get_attribute("title")
+                # do not download if the file already exists or is downloaded
+                if not override and (title in existed_list or title in downloaded_list):
+                    continue
+
                 async with page.expect_download() as download_info:
-                    title = await element.get_attribute("title")
-                    if title not in name_list:
-                        await element.hover()
-                        await element.eval_on_selector(download_selector, "el => el.click()")
+                    await element.hover()
+                    await element.eval_on_selector(download_selector, "el => el.click()")
 
-                        # if this enables batch? No!
-                        # download = await download_info.value
-                        # await download.save_as(os.path.join(save_dir, download.suggested_filename))
-
-                        # this enables batch!!!
-                        async def save():
-                            download = await download_info.value
-                            file_path = os.path.join(save_dir, download.suggested_filename)
-                            if override or not os.path.isfile(file_path):
-                                await download.save_as(file_path)
-                                logger.info(f"Downloaded '{title}' to {file_path}")
-                                async with name_list_lock:
-                                    name_list.append(title)
-                        tg.create_task(save())
-                        
-                        count += 1
-                        if count >= num:
-                            break
+                    # this enables parallel downloading!
+                    async def save():
+                        download = await download_info.value
+                        file_path = os.path.join(save_dir, download.suggested_filename)
+                        await download.save_as(file_path)
+                        logger.info(f"Downloaded '{title}' to {file_path}")
+                        async with downloaded_list_lock:
+                            downloaded_list.append(title)
+                    tg.create_task(save())
+                    
+                    count += 1
+                    if count >= num:
+                        break
 
         batch_count += 1
     
-    return count, name_list
+    return count, downloaded_list
 
 
 async def scroll_all_download(page, menu_type, save_dir, num=None, batch_size=None, override=False):
     # type: (Page, str, str, int|None, int|None, bool) -> list[str]
-    """滚动页面，批量下载"""
-    count = 0
-    name_list = []
+    """滚动页面，批量下载
+    
+    Args:
+        page: Page
+        menu_type: str - Menu.value
+        save_dir: str
+        num: int - 最多下载的文件数量，默认为None，即下载所有“可见”(html中有的)文件
+        batch_size: int - 一批次并行下载的文件数量，默认为None，即一次性下载所有“可见”(html中有的)文件
+        override: bool - 是否覆盖已存在的文件，默认为False
+    """
     selector = ITEMS_SELECTOR[menu_type]
+    await page.wait_for_selector(selector)
+
+    count = 0
+    downloaded_list = []
+    existed_list = os.listdir(save_dir)
 
     while not num or count < num:
-        tmp_count, name_list = await batch_download(page, menu_type, save_dir, num - count if num else None, batch_size, override, name_list)    
-        if tmp_count == 0 or count == len(name_list):
-            break
+        tmp_count, downloaded_list = await batch_download(page, menu_type, save_dir, num - count if num else None, batch_size, override, downloaded_list)    
         count += tmp_count
 
-        await page.wait_for_selector(selector)
-        element = (await page.query_selector_all(selector))[-1]
+        original_elements = await page.query_selector_all(selector)    
+        original_list = [el.get_attribute("title") for el in original_elements]
 
-        await element.scroll_into_view_if_needed()
+        last_element = (original_elements)[-1]
+        await last_element.scroll_into_view_if_needed()
+        # better wait a bit to let elements be fully loaded
+        page.wait_for_timeout(500)
+
+        new_elements = await page.query_selector_all(selector)    
+        new_list = [el.get_attribute("title") for el in new_elements]
+
+        # no more elements: end
+        if original_list == new_list:
+            break
         
-    return name_list
-
-    # # for test
-    # await page.wait_for_selector(selector)
-    # elements = await page.query_selector_all(selector)
-    # logger.debug(f"Initially found {len(elements)} elements")
-    # print(elements)
-    # element = (await page.query_selector_all(selector))[-1]
-
-    # await element.scroll_into_view_if_needed()
-    # await element.click()
-
-    # elements = await page.query_selector_all(selector)
-    # logger.debug(f"Found {len(elements)} elements")
+    return downloaded_list
 
 
-async def main(menu_type, num=None, override=False, *, debug=None, base_url=None, save_dir=None, batch_size=None, contents_timeout=None, tmp_save_dir=None):
-    # type: (str, int|None, bool, Any, bool, str|None, str|None, int|None, int|None, str|None) -> None
+async def select_order(page, order_type, timeout=3000):
+    # type: (Page, Order, int) -> None
+    """选择排序方式"""
+    order_selector = ORDER_SELECTOR[order_type]
+
+    await page.wait_for_selector(ORDER_BAR_SELECTOR)
+    await page.hover(ORDER_BAR_SELECTOR)
+
+    await page.wait_for_selector(order_selector)
+    await page.click(order_selector)
+    # wait for content to be loaded
+    await page.wait_for_timeout(timeout)
+
+
+async def main(menu_type, order_type=None, num=None, override=False, *, debug=None, base_url=None, save_dir=None, batch_size=None, contents_timeout=None, tmp_save_dir=None):
+    # type: (str, Order|None, int|None, bool, Any, bool, str|None, str|None, int|None, int|None, str|None) -> None
     global DEBUG, BASE_URL, SAVE_DIR, BATCH_SIZE, CONTENTS_TIMEOUT
     DEBUG = debug if debug else DEBUG
     BASE_URL = base_url if base_url else BASE_URL
@@ -271,6 +309,9 @@ async def main(menu_type, num=None, override=False, *, debug=None, base_url=None
 
         contents_wait_fn = create_wait_fn(f"{CONTENTS_SELECTOR[menu_type]}/..", CONTENTS_TIMEOUT)
         await click_wait(page, MENU_SELECTOR[menu_type], wait_fn=contents_wait_fn)
+
+        if order_type:
+            await select_order(page, order_type, CONTENTS_TIMEOUT)
 
         name_list = await scroll_all_download(page, menu_type, save_dir, 4 if DEBUG and not num else num, 2 if DEBUG and not batch_size else BATCH_SIZE, override)
 
@@ -309,4 +350,4 @@ async def test():
 
 if __name__ == "__main__":
     args = parser.parse_args()
-    asyncio.run(main(args.menu_type, args.number, args.override, debug=args.debug, base_url=args.base_url, save_dir=args.save_dir, batch_size=args.batch_size, contents_timeout=args.contents_timeout, tmp_save_dir=args.tmp_save_dir))
+    asyncio.run(main(args.menu_type, ORDER_CMD_CHOICES[args.order], args.number, args.override, debug=args.debug, base_url=args.base_url, save_dir=args.save_dir, batch_size=args.batch_size, contents_timeout=args.contents_timeout, tmp_save_dir=args.tmp_save_dir))
