@@ -26,6 +26,7 @@ class Menu(Enum):
     DOC = "doc"
     FILE = "file"
 
+
 MENU_SELECTOR = {
     Menu.HOME.value: f"//li[@id='{Menu.HOME.value}_Module']//div",
     Menu.IMG.value: f"//li[@id='{Menu.IMG.value}_Module']//div",
@@ -75,17 +76,20 @@ DIR_NAMES = {
     Menu.FILE.value: "文件",
 }
 
+
 class Order(Enum):
     NAME = 0
     TYPE = 2
     TIME_ASC = 4
-    TIME_DESC = 5 # default
+    TIME_DESC = 5  # default
     SIZE_ASC = 6
     SIZE_DESC = 7
 
+
 ORDER_BAR_SELECTOR = "//div[contains(@class, 'tab_line')]//div[contains(@class, 'selectBar')]"
 
-ORDER_SELECTOR = {i:f"{ORDER_BAR_SELECTOR}//li[@value='{i.value}']" for i in list(Order)}
+ORDER_SELECTOR = {
+    i: f"{ORDER_BAR_SELECTOR}//li[@value='{i.value}']" for i in list(Order)}
 
 ORDER_CMD_CHOICES = {
     "name": Order.NAME,
@@ -99,22 +103,27 @@ ORDER_CMD_CHOICES = {
 
 ### logger ###
 
-logging.basicConfig(level=LOG_LEVEL, format = '%(asctime)s %(name)s: [%(levelname)s] %(message)s')
+logging.basicConfig(
+    level=LOG_LEVEL, format='%(asctime)s %(name)s: [%(levelname)s] %(message)s')
 logger = logging.getLogger(__name__)
 
 
 ### argparse ###
 
-parser = argparse.ArgumentParser(prog="EasyShare(互传)_Web_Downloader", description="This script simulates the browser request to realize the function of **quick** batch file download. 本脚本通过模拟浏览器请求，实现了互传网页版**快速**批量下载文件的功能")
-parser.add_argument("menu_type", choices=["home", "img", "video", "music", "app", "doc"], help="选择下载的文件类型")
-parser.add_argument("-o", "--order", choices=ORDER_CMD_CHOICES.keys(), help="选择排序方式，默认time_desc")
+parser = argparse.ArgumentParser(prog="EasyShare(互传)_Web_Downloader",
+                                 description="This script simulates the browser request to realize the function of **quick** batch file download. 本脚本通过模拟浏览器请求，实现了互传网页版**快速**批量下载文件的功能")
+parser.add_argument("menu_type", choices=[
+                    "home", "img", "video", "music", "app", "doc"], help="选择下载的文件类型")
+parser.add_argument(
+    "-o", "--order", choices=ORDER_CMD_CHOICES.keys(), help="选择排序方式，默认time_desc")
 parser.add_argument("-n", "--number", type=int, help="选择下载的文件数量")
 parser.add_argument("-r", "--override", action="store_true", help="是否覆盖同名文件")
 parser.add_argument("-D", "--debug", action="store_true", help="开启调试模式")
 parser.add_argument("-U", "--base-url", help="设置互传网页版地址")
 parser.add_argument("-S", "--save-dir", help="设置下载保存目录")
 parser.add_argument("-B", "--batch-size", type=int, help="设置每次下载的文件数量")
-parser.add_argument("-T", "--contents-timeout", type=int, help="等待内容加载的时间，单位ms")
+parser.add_argument("-T", "--contents-timeout",
+                    type=int, help="等待内容加载的时间，单位ms")
 parser.add_argument("-d", "--tmp-save-dir", help="设置临时保存目录")
 
 
@@ -173,7 +182,7 @@ async def click_wait(page, click_selector, wait_selector=None, wait_fn=None):
 async def batch_download(page, menu_type, save_dir, num=None, batch_size=None, override=False, _downloaded_list=None):
     # type: (Page, str, str, int|None, int|None, bool, list|None) -> tuple[int, list[str]]
     """批量下载
-    
+
     Args:
         page: Page
         menu_type: str - Menu.value
@@ -184,7 +193,7 @@ async def batch_download(page, menu_type, save_dir, num=None, batch_size=None, o
         _downloaded_list: list[str] - 已下载的文件名列表，默认为None。注：由`srcoll_all_download`调用，且是deepcopy。
     """
     existed_list = os.listdir(save_dir)
-    
+
     # the item selector: used to be hovered
     selector = ITEMS_SELECTOR[menu_type]
     # the download selector: used to be clicked
@@ -194,7 +203,8 @@ async def batch_download(page, menu_type, save_dir, num=None, batch_size=None, o
     elements = await page.query_selector_all(selector)
 
     num = min(num, len(elements)) if num else len(elements)
-    batch_size = min(batch_size, len(elements)) if batch_size else len(elements)
+    batch_size = min(batch_size, len(elements)
+                     ) if batch_size else len(elements)
     downloaded_list = deepcopy(_downloaded_list) if _downloaded_list else []
     downloaded_list_lock = asyncio.Lock()
 
@@ -217,26 +227,27 @@ async def batch_download(page, menu_type, save_dir, num=None, batch_size=None, o
                     # this enables parallel downloading!
                     async def save():
                         download = await download_info.value
-                        file_path = os.path.join(save_dir, download.suggested_filename)
+                        file_path = os.path.join(
+                            save_dir, download.suggested_filename)
                         await download.save_as(file_path)
                         logger.info(f"Downloaded '{title}' to {file_path}")
                         async with downloaded_list_lock:
                             downloaded_list.append(title)
                     tg.create_task(save())
-                    
+
                     count += 1
                     if count >= num:
                         break
 
         batch_count += 1
-    
+
     return count, downloaded_list
 
 
 async def scroll_all_download(page, menu_type, save_dir, num=None, batch_size=None, override=False):
     # type: (Page, str, str, int|None, int|None, bool) -> list[str]
     """滚动页面，批量下载
-    
+
     Args:
         page: Page
         menu_type: str - Menu.value
@@ -245,6 +256,15 @@ async def scroll_all_download(page, menu_type, save_dir, num=None, batch_size=No
         batch_size: int - 一批次并行下载的文件数量，默认为None，即一次性下载所有“可见”(html中有的)文件
         override: bool - 是否覆盖已存在的文件，默认为False
     """
+    # TODO: prevent the bug of bad connection of network: refresh page and retry from the beginning
+    # bug_selector = "//div[contains(@class, 'dialog_containner')]" # "containner" is not misspelled but original website's class name
+    # await page.eval_on_selector(bug_selector, "el => el.remove()") # the element is originally invisible, so do not wait for it
+    # await page.evaluate("""() => {
+    #     setInterval(() => {
+    #         document.querySelectorAll("div.dialog_containner").forEach(el => el.remove());
+    #     }, 1000)
+    # }""")
+
     selector = ITEMS_SELECTOR[menu_type]
     await page.wait_for_selector(selector)
 
@@ -253,10 +273,10 @@ async def scroll_all_download(page, menu_type, save_dir, num=None, batch_size=No
     existed_list = os.listdir(save_dir)
 
     while not num or count < num:
-        tmp_count, downloaded_list = await batch_download(page, menu_type, save_dir, num - count if num else None, batch_size, override, downloaded_list)    
+        tmp_count, downloaded_list = await batch_download(page, menu_type, save_dir, num - count if num else None, batch_size, override, downloaded_list)
         count += tmp_count
 
-        original_elements = await page.query_selector_all(selector)    
+        original_elements = await page.query_selector_all(selector)
         original_list = [el.get_attribute("title") for el in original_elements]
 
         last_element = (original_elements)[-1]
@@ -264,13 +284,13 @@ async def scroll_all_download(page, menu_type, save_dir, num=None, batch_size=No
         # better wait a bit to let elements be fully loaded
         page.wait_for_timeout(500)
 
-        new_elements = await page.query_selector_all(selector)    
+        new_elements = await page.query_selector_all(selector)
         new_list = [el.get_attribute("title") for el in new_elements]
 
         # no more elements: end
         if original_list == new_list:
             break
-        
+
     return downloaded_list
 
 
@@ -298,7 +318,8 @@ async def main(menu_type, order_type=None, num=None, override=False, *, debug=No
     BATCH_SIZE = batch_size if batch_size else BATCH_SIZE
     CONTENTS_TIMEOUT = contents_timeout if contents_timeout else CONTENTS_TIMEOUT
 
-    tmp_save_dir = os.path.join(SAVE_DIR, ".tmp") if not tmp_save_dir else tmp_save_dir
+    tmp_save_dir = os.path.join(
+        SAVE_DIR, ".tmp") if not tmp_save_dir else tmp_save_dir
     save_dir = os.path.join(SAVE_DIR, DIR_NAMES[menu_type])
     create_dir(tmp_save_dir)
     create_dir(save_dir)
@@ -308,11 +329,24 @@ async def main(menu_type, order_type=None, num=None, override=False, *, debug=No
         page = await browser.new_page()
         await page.goto(BASE_URL)
 
-        contents_wait_fn = create_wait_fn(f"{CONTENTS_SELECTOR[menu_type]}/..", CONTENTS_TIMEOUT)
+        logger.info(f"{BASE_URL} opened")
+
+        contents_wait_fn = create_wait_fn(
+            f"{CONTENTS_SELECTOR[menu_type]}/..", CONTENTS_TIMEOUT)
         await click_wait(page, MENU_SELECTOR[menu_type], wait_fn=contents_wait_fn)
+
+        logger.info(
+            f"'{menu_type}({DIR_NAMES[menu_type]})' clicked and contents loaded")
 
         if order_type:
             await select_order(page, menu_type, order_type, CONTENTS_TIMEOUT)
+
+            logger.info(f"'{order_type.name.lower()}' order applied")
+
+        logger.info(f"Start downloading {(4 if DEBUG and not num else num) if num else 'all'} " +
+                    f"items of '{menu_type}({DIR_NAMES[menu_type]})' to {save_dir} with batch " +
+                    f"size {2 if DEBUG and not batch_size else BATCH_SIZE} " +
+                    f"{'without overriding' if not override else 'with overriding'}...")
 
         name_list = await scroll_all_download(page, menu_type, save_dir, 4 if DEBUG and not num else num, 2 if DEBUG and not batch_size else BATCH_SIZE, override)
 
@@ -338,7 +372,8 @@ async def test():
 
         await page.goto(BASE_URL)
 
-        contents_wait_fn = create_wait_fn(f"{CONTENTS_SELECTOR[Menu.VIDEO.value]}/..")
+        contents_wait_fn = create_wait_fn(
+            f"{CONTENTS_SELECTOR[Menu.VIDEO.value]}/..")
         await click_wait(page, MENU_SELECTOR[Menu.VIDEO.value], wait_fn=contents_wait_fn)
 
         # await batch_download(page, Menu.VIDEO.value, save_dir, 2 if DEBUG else None, BATCH_SIZE)
@@ -351,4 +386,5 @@ async def test():
 
 if __name__ == "__main__":
     args = parser.parse_args()
-    asyncio.run(main(args.menu_type, ORDER_CMD_CHOICES[args.order], args.number, args.override, debug=args.debug, base_url=args.base_url, save_dir=args.save_dir, batch_size=args.batch_size, contents_timeout=args.contents_timeout, tmp_save_dir=args.tmp_save_dir))
+    asyncio.run(main(args.menu_type, ORDER_CMD_CHOICES[args.order], args.number, args.override, debug=args.debug, base_url=args.base_url,
+                save_dir=args.save_dir, batch_size=args.batch_size, contents_timeout=args.contents_timeout, tmp_save_dir=args.tmp_save_dir))
