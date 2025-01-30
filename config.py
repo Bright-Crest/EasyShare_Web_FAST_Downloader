@@ -7,7 +7,7 @@ DEBUG = False
 # BASE_URL = "http://192.168.1.57:55666/"
 BASE_URL = "http://192.168.1.121:55666/"
 # 下载保存目录
-SAVE_DIR = "G:\\phoneT\\互传-网页传文件\\ScriptDownloads"  
+SAVE_DIR = "G:\\phoneT\\互传-网页传文件"  
 # no cookies
 HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/132.0.0.0 Safari/537.36 Edg/132.0.0.0",

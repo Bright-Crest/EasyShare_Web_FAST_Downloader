@@ -1,3 +1,4 @@
+# TODO: 1. fix img group scrolling problem: 页面不会完整地加载所有img groups，因此只有scroll到底才能判断总共有多少img groups
 import os
 from enum import Enum
 import asyncio
@@ -102,6 +103,12 @@ ORDER_CMD_CHOICES = {
 }
 
 
+IMG_GROUP_SELECTOR = "//div[contains(@class, 'imgGroupList')]//ul[contains(@class, 'groupPic')]"
+# relative to IMG_GROUP_SELECTOR
+IMG_GROUP_NAME_SELECTOR = "//div[contains(@class, 'pic_info')]//span[1]"
+IMG_GROUP_NUM_SELECTOR = "//div[contains(@class, 'pic_info')]//span[2]"
+
+
 ### logger ###
 
 logging.basicConfig(
@@ -117,15 +124,16 @@ parser.add_argument("menu_type", choices=[
                     "home", "img", "video", "music", "app", "doc"], help="选择下载的文件类型")
 parser.add_argument(
     "-o", "--order", choices=ORDER_CMD_CHOICES.keys(), help="选择排序方式，默认time_desc")
-parser.add_argument("-n", "--number", type=int, help="选择下载的文件数量")
-parser.add_argument("-r", "--override", action="store_true", help="是否覆盖同名文件")
-parser.add_argument("-D", "--debug", action="store_true", help="开启调试模式")
-parser.add_argument("-U", "--base-url", help="设置互传网页版地址")
-parser.add_argument("-S", "--save-dir", help="设置下载保存目录")
-parser.add_argument("-B", "--batch-size", type=int, help="设置每次下载的文件数量")
+parser.add_argument("-i", "--img-group-idx", type=int, help="选择下载的图片分组索引，索引从1开始，如果不指定则下载全部图片分组")
+parser.add_argument("-n", "--number", type=int, help="选择下载的文件数量，如果不指定则下载全部文件")
+parser.add_argument("-r", "--override", action="store_true", help="是否覆盖同名文件，默认不覆盖")
+parser.add_argument("-D", "--debug", action="store_true", help="开启调试模式，默认关闭")
+parser.add_argument("-U", "--base-url", help="设置互传网页版地址，`config.py`中也可设置，命令行参数优先级更高")
+parser.add_argument("-S", "--save-dir", help="设置下载保存目录，`config.py`中也可设置，命令行参数优先级更高")
+parser.add_argument("-B", "--batch-size", type=int, help="设置每次下载的文件数量，`config.py`中也可设置，命令行参数优先级更高")
 parser.add_argument("-T", "--contents-timeout",
-                    type=int, help="等待内容加载的时间，单位ms")
-parser.add_argument("-d", "--tmp-save-dir", help="设置临时保存目录")
+                    type=int, help="等待内容加载的时间，单位ms，`config.py`中也可设置，命令行参数优先级更高")
+parser.add_argument("-d", "--tmp-save-dir", help="设置临时保存目录，如果不指定则为`--save-dir`下的`.tmp`目录")
 
 
 ### functions ###
@@ -140,23 +148,11 @@ def create_dir(path):
         return False
 
 
-# async def is_element_visible(page, selector):
-#     # type: (Page, str) -> bool
-#     """判断元素的display样式是否不为none"""
-#     # 检查元素的display属性
-#     display_value = await page.eval_on_selector(selector, "el => window.getComputedStyle(el).display")
-#     # 返回判断结果
-#     return display_value != "none"
-
-
 def create_wait_fn(selector, timeout=3000):
     # type: (str, int) -> callable
     """创建等待函数"""
     async def wait_fn(page):
         # type: (Page) -> None
-
-        # while not await is_element_visible(page, selector):
-        #     await page.wait_for_timeout(500)
         await page.wait_for_selector(selector)
         # wait for the content to be loaded
         await page.wait_for_timeout(timeout)
@@ -311,8 +307,27 @@ async def select_order(page, menu_type, order_type, timeout=3000):
     await page.wait_for_timeout(timeout)
 
 
-async def main(menu_type, order_type=None, num=None, override=False, *, debug=None, base_url=None, save_dir=None, batch_size=None, contents_timeout=None, tmp_save_dir=None):
-    # type: (str, Order|None, int|None, bool, Any, bool, str|None, str|None, int|None, int|None, str|None) -> None
+async def select_img_group(page, img_group_idx, timeout=3000):
+    # type: (Page, int, int) -> tuple[str, int]
+    img_group_selector = f"{IMG_GROUP_SELECTOR}[{img_group_idx}]"
+    img_group_name_selector = f"{img_group_selector}{IMG_GROUP_NAME_SELECTOR}"
+    img_group_num_selector = f"{img_group_selector}{IMG_GROUP_NUM_SELECTOR}"
+
+    await page.wait_for_selector(img_group_selector)
+    img_group = await page.query_selector(img_group_selector)
+    await img_group.scroll_into_view_if_needed()
+    await page.click(img_group_selector)
+
+    await page.wait_for_timeout(timeout)
+
+    name = await page.inner_text(img_group_name_selector)
+    tmp_num = await page.inner_text(img_group_num_selector)
+    num = int(tmp_num.strip("()"))
+    return name, num
+
+
+async def main(menu_type, order_type=None, img_group_idx=None, num=None, override=False, *, debug=None, base_url=None, save_dir=None, batch_size=None, contents_timeout=None, tmp_save_dir=None):
+    # type: (str, Order|None, int|None, int|None, bool, Any, bool, str|None, str|None, int|None, int|None, str|None) -> None
     global DEBUG, BASE_URL, SAVE_DIR, BATCH_SIZE, CONTENTS_TIMEOUT
     DEBUG = debug if debug else DEBUG
     BASE_URL = base_url if base_url else BASE_URL
@@ -342,7 +357,6 @@ async def main(menu_type, order_type=None, num=None, override=False, *, debug=No
 
         if order_type:
             await select_order(page, menu_type, order_type, CONTENTS_TIMEOUT)
-
             logger.info(f"'{order_type.name.lower()}' order applied")
 
         logger.info(f"Start downloading {(4 if DEBUG and not num else num) if num else 'all'} " +
@@ -350,12 +364,44 @@ async def main(menu_type, order_type=None, num=None, override=False, *, debug=No
                     f"size {2 if DEBUG and not batch_size else BATCH_SIZE} " +
                     f"{'without overriding' if not override else 'with overriding'}...")
 
-        name_list = await scroll_all_download(page, menu_type, save_dir, 4 if DEBUG and not num else num, 2 if DEBUG and not batch_size else BATCH_SIZE, override)
+        if menu_type != "img":
+            name_list = await scroll_all_download(page, menu_type, save_dir, 4 if DEBUG and not num else num, 2 if DEBUG and not batch_size else BATCH_SIZE, override)
+            output = "Download sum:\n"
+            for i, name in enumerate(name_list):
+                output += f"\t{i}: {name}\n"
+            logger.info(output)
+        else:
+            # img: handle img groups
+            img_groups = await page.query_selector_all(IMG_GROUP_SELECTOR)
 
-        output = "Download sum:\n"
-        for i, name in enumerate(name_list):
-            output += f"\t{i}: {name}\n"
-        logger.info(output)
+            # NOTICE: `num` applied to each img group downloading
+            async def _img_download(img_group_idx_):
+                # type: (int) -> tuple[list[str], str, int]
+                img_group_name, img_group_num = await select_img_group(page, img_group_idx_, CONTENTS_TIMEOUT)
+                logger.info(f"Selected img group {img_group_idx_}: '{img_group_name}'")
+                img_group_save_dir = os.path.join(save_dir, img_group_name)
+                create_dir(img_group_save_dir)
+                name_list = await scroll_all_download(page, menu_type, img_group_save_dir, 4 if DEBUG and not num else num, 2 if DEBUG and not batch_size else BATCH_SIZE, override)
+
+                output = "Download sum:\n"
+                for i, name in enumerate(name_list):
+                    output += f"\t{i}: {name}\n"
+                logger.info(output)
+                logger.info(f"Downloaded {len(name_list)} images out of {img_group_num} images in image group '{img_group_name}'")
+                return name_list, img_group_name, img_group_idx_
+
+            if img_group_idx and (img_group_idx > len(img_groups) or img_group_idx < 1):
+                logger.error(f"Invalid img group index {img_group_idx}! Valid img group index range: [1, {len(img_groups)}]")
+            elif img_group_idx:
+                name_list, img_group_name, img_group_num = await _img_download(img_group_idx)
+            else:
+                # download all img groups
+                sum_output = "All img groups download sum:\n"
+                sum_output += "\tImage Group\tDownloaded Num\tTotal Num\n"
+                for i in range(1, len(img_groups) + 1):                    
+                    name_list, img_group_name, img_group_num = await _img_download(i)
+                    sum_output += f"\t{img_group_name}\t{len(name_list)}\t{img_group_num}"
+                logger.info(sum_output)
 
         while DEBUG:
             pass
@@ -388,5 +434,5 @@ async def test():
 
 if __name__ == "__main__":
     args = parser.parse_args()
-    asyncio.run(main(args.menu_type, ORDER_CMD_CHOICES[args.order], args.number, args.override, debug=args.debug, base_url=args.base_url,
+    asyncio.run(main(args.menu_type, ORDER_CMD_CHOICES[args.order] if args.order else None, args.img_group_idx, args.number, args.override, debug=args.debug, base_url=args.base_url,
                 save_dir=args.save_dir, batch_size=args.batch_size, contents_timeout=args.contents_timeout, tmp_save_dir=args.tmp_save_dir))
