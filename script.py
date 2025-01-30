@@ -3,6 +3,7 @@ from enum import Enum
 import asyncio
 import argparse
 from copy import deepcopy
+import math
 import logging
 
 import requests
@@ -209,9 +210,9 @@ async def batch_download(page, menu_type, save_dir, num=None, batch_size=None, o
     downloaded_list_lock = asyncio.Lock()
 
     batch_count = 0
-    count = 0
+    downloaded_count = 0
 
-    while count < num:
+    for batch_count in range(math.ceil(num / batch_size)):
         async with asyncio.TaskGroup() as tg:
             for element in elements[batch_count * batch_size:(batch_count + 1) * batch_size]:
                 # title is the file name
@@ -235,13 +236,13 @@ async def batch_download(page, menu_type, save_dir, num=None, batch_size=None, o
                             downloaded_list.append(title)
                     tg.create_task(save())
 
-                    count += 1
-                    if count >= num:
+                    downloaded_count += 1
+                    if downloaded_count >= num:
                         break
 
         batch_count += 1
 
-    return count, downloaded_list
+    return downloaded_count, downloaded_list
 
 
 async def scroll_all_download(page, menu_type, save_dir, num=None, batch_size=None, override=False):
@@ -270,22 +271,21 @@ async def scroll_all_download(page, menu_type, save_dir, num=None, batch_size=No
 
     count = 0
     downloaded_list = []
-    existed_list = os.listdir(save_dir)
 
     while not num or count < num:
         tmp_count, downloaded_list = await batch_download(page, menu_type, save_dir, num - count if num else None, batch_size, override, downloaded_list)
         count += tmp_count
 
         original_elements = await page.query_selector_all(selector)
-        original_list = [el.get_attribute("title") for el in original_elements]
+        original_list = [await el.get_attribute("title") for el in original_elements]
 
         last_element = (original_elements)[-1]
         await last_element.scroll_into_view_if_needed()
         # better wait a bit to let elements be fully loaded
-        page.wait_for_timeout(500)
+        await page.wait_for_timeout(2000)
 
         new_elements = await page.query_selector_all(selector)
-        new_list = [el.get_attribute("title") for el in new_elements]
+        new_list = [await el.get_attribute("title") for el in new_elements]
 
         # no more elements: end
         if original_list == new_list:

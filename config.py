@@ -4,7 +4,8 @@ import logging
 
 DEBUG = False
 # do not use "http://as.vivo.com/"; use the url which has already established connection
-BASE_URL = "http://192.168.1.57:55666/"
+# BASE_URL = "http://192.168.1.57:55666/"
+BASE_URL = "http://192.168.1.121:55666/"
 # 下载保存目录
 SAVE_DIR = "G:\\phoneT\\互传-网页传文件\\ScriptDownloads"  
 # no cookies
