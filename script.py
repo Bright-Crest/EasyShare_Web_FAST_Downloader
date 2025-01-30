@@ -228,8 +228,10 @@ async def batch_download(page, menu_type, save_dir, num=None, batch_size=None, o
                     # this enables parallel downloading!
                     async def save():
                         download = await download_info.value
+                        if download.suggested_filename != title:
+                            logger.warning(f"The suggested filename '{download.suggested_filename}' is different from the original filename '{title}'! Use '{title}'")
                         file_path = os.path.join(
-                            save_dir, download.suggested_filename)
+                            save_dir, title)
                         await download.save_as(file_path)
                         logger.info(f"Downloaded '{title}' to {file_path}")
                         async with downloaded_list_lock:
